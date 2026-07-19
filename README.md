@@ -1,6 +1,8 @@
 # Icy Tower
 An open source remake of Icy Tower 1.3.1 using Allegro 5
 
+**Note**: this repository is deprecated; active development has moved to [here](https://github.com/royeldar/icytower-ng).
+
 The gfx+sfx resources were extracted from the original datafiles
 
 The physics engine is thanks to RaMMicHaeL: see
