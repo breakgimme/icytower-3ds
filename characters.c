@@ -1,5 +1,3 @@
-#include <allegro5/allegro.h>
-
 #include "characters.h"
 #include "gfx.h"
 #include "sfx.h"

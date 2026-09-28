@@ -1,9 +1,8 @@
-#include <allegro5/allegro.h>
-#include <allegro5/allegro_image.h>
-#include <allegro5/allegro_font.h>
-#include <allegro5/allegro_audio.h>
-#include <allegro5/allegro_acodec.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+#include <3ds.h>
 
 #include "icytower.h"
 #include "gfx.h"
@@ -13,317 +12,278 @@
 #include "characters.h"
 #include "floor_types.h"
 #include "game.h"
+#include "physics.h"
 
-bool initialize(void) {
-	if (!al_init()) {
-		printf("Failed to initialize the Allegro system\n");
-		return false;
-	}
-	if (!al_init_image_addon()) {
-		printf("Failed to initialize the image i/o addon\n");
-		return false;
-	}
-	if (!al_init_font_addon()) {
-		printf("Failed to initialize the font addons\n");
-		return false;
-	}
-	if (!al_install_keyboard()) {
-		printf("Failed to install the keyboard driver\n");
-		return false;
-	}
-	if (!al_install_audio()) {
-		printf("Failed to install the audio subsystem\n");
-		return false;
-	}
-	if (!al_init_acodec_addon()) {
-		printf("Failed to initialize the audio codecs\n");
-		return false;
-	}
-	if (!al_reserve_samples(16)) {
-		printf("Failed to reserve audio sample instances\n");
-		return false;
-	}
-	return true;
-}
-
-void initialize_music(ALLEGRO_AUDIO_STREAM *audio_stream) {
-	al_set_audio_stream_playing(audio_stream, false);
-	al_set_audio_stream_playmode(audio_stream, ALLEGRO_PLAYMODE_LOOP);
-	al_attach_audio_stream_to_mixer(audio_stream, al_get_default_mixer());
-}
-
-void play_music(ALLEGRO_AUDIO_STREAM *audio_stream) {
-	al_rewind_audio_stream(audio_stream);
-	al_set_audio_stream_playing(audio_stream, true);
-}
-
-void stop_music(ALLEGRO_AUDIO_STREAM *audio_stream) {
-	al_set_audio_stream_playing(audio_stream, false);
-}
-
-void start_game(void) {
-	stop_music(audio_stream_bg_menu);
-	play_music(characters[character_index].sfx.bgmusic);
-	initialize_game();
-	draw_game();
-	al_play_sample(characters[character_index].sfx.greeting, volume_sfx / 10.0,
-			0, 1, ALLEGRO_PLAYMODE_ONCE, NULL);
-}
-
-void pause_game(void) {
-	al_play_sample(characters[character_index].sfx.pause, volume_sfx / 10.0,
-			0, 1, ALLEGRO_PLAYMODE_ONCE, NULL);
-}
-
-void main_menu(void) {
-	stop_music(characters[character_index].sfx.bgmusic);
-	play_music(audio_stream_bg_menu);
-}
+#define TICK_MS 20
 
 enum GAME_STATE game_state;
 
-int main() {
-	ALLEGRO_DISPLAY *display = NULL;
-	ALLEGRO_TIMER *timer = NULL;
-	ALLEGRO_EVENT_QUEUE *event_queue = NULL;
-	ALLEGRO_EVENT event;
-	bool redraw;
-	bool game_running;
-	bool paused;
-	bool dont_draw;
-
-	if (!initialize())
-		goto cleanup;
-
-	al_set_new_display_flags(ALLEGRO_WINDOWED);
-	display = al_create_display(640, 480);
-	if (display == NULL) {
-		printf("Failed to create a display\n");
-		goto cleanup;
-	}
-
-	timer = al_create_timer(1.0 / 50.0);
-	if (timer == NULL) {
-		printf("Failed to create a timer\n");
-		goto cleanup;
-	}
-
-	event_queue = al_create_event_queue();
-	if (event_queue == NULL) {
-		printf("Failed to create an event queue\n");
-		goto cleanup;
-	}
-
-	al_register_event_source(event_queue,
-			al_get_keyboard_event_source());
-	al_register_event_source(event_queue,
-			al_get_display_event_source(display));
-	al_register_event_source(event_queue,
-			al_get_timer_event_source(timer));
-
-	printf("Loading gfx resources...\n");
-	if (!gfx_load_bitmaps()) {
-		printf("Failed to load gfx resources\n");
-		goto cleanup;
-	}
-	printf("Loading fonts...\n");
-	if (!gfx_load_fonts()) {
-		printf("Failed to load fonts\n");
-		goto cleanup;
-	}
-	printf("Loading sfx resources...\n");
-	if (!sfx_load_audio_streams_and_samples()) {
-		printf("Failed to load sfx resources\n");
-		goto cleanup;
-	}
-
-	initialize_characters();
-	initialize_floor_types();
-
-	initialize_music(audio_stream_bg_beat);
-	initialize_music(audio_stream_disco_dave_bg_dave);
-	initialize_music(audio_stream_bg_menu);
-
-	game_state = TITLE;
-	main_menu();
-
-	game_running = true;
-	redraw = true;
-	paused = false;
-	dont_draw = false;
-	al_start_timer(timer);
-	while (game_running) {
-		al_wait_for_event(event_queue, &event);
-		switch (event.type) {
-		case ALLEGRO_EVENT_DISPLAY_CLOSE:
-			goto cleanup;
-		case ALLEGRO_EVENT_DISPLAY_HALT_DRAWING:
-			al_acknowledge_drawing_halt(display);
-			dont_draw = true;
-			break;
-		case ALLEGRO_EVENT_DISPLAY_RESUME_DRAWING:
-			al_acknowledge_drawing_resume(display);
-			dont_draw = false;
-			break;
-		case ALLEGRO_EVENT_DISPLAY_SWITCH_OUT:
-			/* pause the game */
-			paused = true;
-			break;
-		case ALLEGRO_EVENT_DISPLAY_SWITCH_IN:
-			/* resume the game */
-			paused = false;
-			break;
-		case ALLEGRO_EVENT_TIMER:
-			switch (game_state) {
-			case PLAYING:
-				if (!paused)
-					do_tick();
-				break;
-			case EXIT:
-				game_running = false;
-				break;
-			}
-			// currently, redraw is coupled to physics tick
-			// but it shouldn't be that way!
-			redraw = true;
-			break;
-		case ALLEGRO_EVENT_KEY_DOWN:
-			switch (game_state) {
-			case TITLE:
-				switch (event.keyboard.keycode) {
-				case ALLEGRO_KEY_UP:
-					menu_up();
-					break;
-				case ALLEGRO_KEY_DOWN:
-					menu_down();
-					break;
-				case ALLEGRO_KEY_ENTER:
-				case ALLEGRO_KEY_SPACE:
-					menu_enter();
-					break;
-				case ALLEGRO_KEY_ESCAPE:
-					menu_escape();
-					break;
-				case ALLEGRO_KEY_LEFT:
-					menu_left();
-					break;
-				case ALLEGRO_KEY_RIGHT:
-					menu_right();
-					break;
-				}
-				break;
-			case INSTRUCTIONS:
-				switch (event.keyboard.keycode) {
-				case ALLEGRO_KEY_ENTER:
-				case ALLEGRO_KEY_SPACE:
-				case ALLEGRO_KEY_ESCAPE:
-					game_state = TITLE;
-					break;
-				}
-				break;
-			case PLAYING:
-				if (event.keyboard.keycode == ALLEGRO_KEY_ESCAPE) {
-					game_state = ESCAPE;
-					pause_game();
-				} else if (event.keyboard.keycode == key_pause) {
-					game_state = PAUSE;
-					pause_game();
-				} else if (event.keyboard.keycode == key_left)
-					press_left();
-				else if (event.keyboard.keycode == key_right)
-					press_right();
-				else if (event.keyboard.keycode == key_jump)
-					press_jump();
-				break;
-			case PAUSE:
-				game_state = PLAYING;
-				if (event.keyboard.keycode == key_left)
-					press_left();
-				else if (event.keyboard.keycode == key_right)
-					press_right();
-				else if (event.keyboard.keycode == key_jump)
-					press_jump();
-				break;
-			case ESCAPE:
-				if (event.keyboard.keycode == ALLEGRO_KEY_ESCAPE) {
-					al_play_sample(sample_tryagain, volume_sfx / 10.0,
-							0, 1, ALLEGRO_PLAYMODE_ONCE, NULL);
-					game_state = TITLE;
-					main_menu();
-				} else {
-					game_state = PLAYING;
-					if (event.keyboard.keycode == key_left)
-						press_left();
-					else if (event.keyboard.keycode == key_right)
-						press_right();
-					else if (event.keyboard.keycode == key_jump)
-						press_jump();
-				}
-				break;
-			case GAMEOVER:
-				if (event.keyboard.keycode == ALLEGRO_KEY_ESCAPE) {
-					al_play_sample(sample_tryagain, volume_sfx / 10.0,
-							0, 1, ALLEGRO_PLAYMODE_ONCE, NULL);
-					game_state = TITLE;
-					main_menu();
-				}
-				break;
-			case EXIT:
-				break;
-			}
-			break;
-		case ALLEGRO_EVENT_KEY_UP:
-			if (game_state == PLAYING) {
-				if (event.keyboard.keycode == key_left)
-					release_left();
-				else if (event.keyboard.keycode == key_right)
-					release_right();
-				else if (event.keyboard.keycode == key_jump)
-					release_jump();
-			}
-			break;
-		}
-
-		// if there are events in queue, continue to process them
-		if (!al_is_event_queue_empty(event_queue))
-			continue;
-
-		if (redraw && !dont_draw) {
-			switch (game_state) {
-			case TITLE:
-				draw_menu();
-				break;
-			case INSTRUCTIONS:
-				draw_instructions();
-				break;
-			case PLAYING:
-				draw_game();
-				break;
-			case PAUSE:
-				draw_pause();
-				break;
-			case ESCAPE:
-				draw_escape();
-				break;
-			case GAMEOVER:
-				draw_gameover();
-				break;
-			}
-			al_flip_display();
-			redraw = false;
-		}
-	}
-
-cleanup:
-	sfx_destroy_audio_streams_and_samples();
-	gfx_destroy_fonts();
-	gfx_destroy_bitmaps();
-
-	if (event_queue)
-		al_destroy_event_queue(event_queue);
-	if (timer)
-		al_destroy_timer(timer);
-	if (display)
-		al_destroy_display(display);
-	return 0;
+static void clear_bottom_screen(void) {
+    int i;
+    for (i = 0; i < 2; ++i) {
+        u16 w = 0, h = 0;
+        uint16_t *fb = (uint16_t *)gfxGetFramebuffer(GFX_BOTTOM,
+                                                    GFX_LEFT, &w, &h);
+        size_t n = (w != 0 && h != 0) ? (size_t)w * h : (size_t)240 * 320;
+        size_t j;
+        for (j = 0; j < n; ++j)
+            fb[j] = 0;
+        gfxFlushBuffers();
+        gfxSwapBuffers();
+    }
+    gspWaitForVBlank();
 }
+
+static void panic(void) {
+    screen_top_begin();
+    screen_clear(RGB(255, 0, 0));
+    screen_present(0);
+    gspWaitForVBlank();
+    while (aptMainLoop()) {
+        gspWaitForVBlank();
+        hidScanInput();
+        if (hidKeysDown() & KEY_START)
+            break;
+    }
+}
+
+void start_game(void) {
+    stop_music(characters[character_index].sfx.bgmusic);
+    play_music(characters[character_index].sfx.bgmusic);
+    initialize_game();
+    draw_game();
+    play_sample(characters[character_index].sfx.greeting,
+                volume_sfx / 10.0f);
+}
+
+static void pause_game(void) {
+    play_sample(characters[character_index].sfx.pause,
+                volume_sfx / 10.0f);
+}
+
+static void to_main_menu(void) {
+    stop_music(characters[character_index].sfx.bgmusic);
+    play_music(audio_stream_bg_menu);
+}
+
+#define MENU_DIRS (KEY_DUP | KEY_DDOWN | KEY_DLEFT | KEY_DRIGHT)
+
+static u32 menu_dir_state(u32 down, u32 held) {
+    static u64 rep_at[4];
+    static u32 prev_held;
+    static u32 prev_cdir;
+    static const u32 bits[4] = {
+        KEY_DUP, KEY_DDOWN, KEY_DLEFT, KEY_DRIGHT
+    };
+    circlePosition cpos;
+    u32 cdir = 0, h, d, out = 0;
+    u64 now;
+    int i;
+
+    hidCircleRead(&cpos);
+    if (cpos.dy > 30)
+        cdir |= KEY_DUP;
+    if (cpos.dy < -30)
+        cdir |= KEY_DDOWN;
+    if (cpos.dx < -30)
+        cdir |= KEY_DLEFT;
+    if (cpos.dx > 30)
+        cdir |= KEY_DRIGHT;
+
+    h = (held & MENU_DIRS) | cdir;
+    d = (down & MENU_DIRS) | (cdir & ~prev_cdir);
+    prev_cdir = cdir;
+    now = osGetTime();
+
+    for (i = 0; i < 4; ++i) {
+        if (d & bits[i]) {
+            out |= bits[i];
+            rep_at[i] = now + 350;
+        } else if (h & bits[i]) {
+            if (!(prev_held & bits[i]))
+                rep_at[i] = now + 350;
+            else if (now >= rep_at[i]) {
+                out |= bits[i];
+                rep_at[i] = now + 90;
+            }
+        }
+    }
+    prev_held = h;
+    return out;
+}
+
+static void handle_menu_buttons(u32 down, u32 held) {
+    u32 mdir = menu_dir_state(down, held);
+    if (!down && !mdir)
+        return;
+    if (!down)
+        return;
+    switch (game_state) {
+    case TITLE:
+        if (mdir & KEY_DUP)
+            menu_up();
+        if (mdir & KEY_DDOWN)
+            menu_down();
+        if (down & (KEY_A | KEY_START))
+            menu_enter();
+        if (down & KEY_B)
+            menu_escape();
+        if (mdir & KEY_DLEFT)
+            menu_left();
+        if (mdir & KEY_DRIGHT)
+            menu_right();
+        break;
+    case INSTRUCTIONS:
+        if (down & (KEY_A | KEY_B | KEY_START | KEY_SELECT))
+            game_state = TITLE;
+        break;
+    case PLAYING:
+        if (down & KEY_START) {
+            game_state = PAUSE;
+            pause_game();
+        } else if (down & KEY_SELECT) {
+            game_state = ESCAPE;
+            pause_game();
+        }
+        break;
+    case PAUSE:
+
+        game_state = PLAYING;
+        break;
+    case ESCAPE:
+        if (down & (KEY_B | KEY_START | KEY_SELECT)) {
+            play_sample(sample_tryagain, volume_sfx / 10.0f);
+            game_state = TITLE;
+            to_main_menu();
+        } else {
+            game_state = PLAYING;
+        }
+        break;
+    case GAMEOVER:
+        if (down & (KEY_A | KEY_B | KEY_START | KEY_SELECT)) {
+            play_sample(sample_tryagain, volume_sfx / 10.0f);
+            game_state = TITLE;
+            to_main_menu();
+        }
+        break;
+    case EXIT:
+        break;
+    }
+}
+
+static int sample_play_keys(u32 held) {
+    circlePosition cpos;
+    int k = 0;
+    hidCircleRead(&cpos);
+    if ((held & KEY_DLEFT) || cpos.dx < -30)
+        k |= KEY_LEFT;
+    if ((held & KEY_DRIGHT) || cpos.dx > 30)
+        k |= KEY_RIGHT;
+    if (held & (KEY_A | KEY_B | KEY_X | KEY_Y))
+        k |= KEY_JUMP;
+    return k;
+}
+
+#ifndef HOST_TEST
+int main(void) {
+    u64 last_ms;
+    int acc_ms = 0;
+
+    gfxInitDefault();
+    clear_bottom_screen();
+    gfx_3ds_init();
+
+    if (R_FAILED(romfsInit()))
+        panic();
+
+    if (!sfx_init())
+        panic();
+    set_music_gain(volume_music / 10.0f);
+
+    if (!gfx_load_bitmaps())
+        panic();
+    if (!gfx_load_fonts())
+        panic();
+    if (!sfx_load_audio_streams_and_samples())
+        panic();
+
+    initialize_characters();
+    initialize_floor_types();
+
+    game_state = TITLE;
+    to_main_menu();
+
+    last_ms = osGetTime();
+    while (aptMainLoop()) {
+        u64 now_ms;
+        int steps;
+        u32 held, down;
+
+        hidScanInput();
+        held = hidKeysHeld();
+        down = hidKeysDown();
+        handle_menu_buttons(down, held);
+
+        now_ms = osGetTime();
+        acc_ms += (int)(now_ms - last_ms);
+        last_ms = now_ms;
+        if (acc_ms > 100)
+            acc_ms = 100;
+        if (acc_ms < 0)
+            acc_ms = 0;
+
+        steps = 0;
+        while (game_state == PLAYING && acc_ms >= TICK_MS && steps < 5) {
+            set_keys(sample_play_keys(held));
+            do_tick();
+            acc_ms -= TICK_MS;
+            ++steps;
+        }
+        if (game_state != PLAYING)
+            acc_ms = 0;
+        if (game_state == EXIT)
+            break;
+
+        switch (game_state) {
+        case TITLE:
+            screen_top_begin();
+            draw_menu();
+            break;
+        case INSTRUCTIONS:
+            screen_top_begin();
+            draw_instructions();
+            break;
+        case PLAYING:
+            screen_top_begin();
+            draw_game();
+            break;
+        case PAUSE:
+            screen_top_begin();
+            draw_pause();
+            break;
+        case ESCAPE:
+            screen_top_begin();
+            draw_escape();
+            break;
+        case GAMEOVER:
+            screen_top_begin();
+            draw_gameover();
+            break;
+        case EXIT:
+            break;
+        }
+        draw_bottom_brick();
+        if (game_state == PLAYING)
+            draw_bottom_hud();
+        screen_present(fullscreen);
+    }
+
+    sfx_destroy_audio_streams_and_samples();
+    gfx_destroy_fonts();
+    gfx_destroy_bitmaps();
+    sfx_shutdown();
+    romfsExit();
+    gfxExit();
+    return 0;
+}
+#endif

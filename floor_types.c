@@ -1,5 +1,3 @@
-#include <allegro5/allegro.h>
-
 #include "floor_types.h"
 #include "gfx.h"
 
